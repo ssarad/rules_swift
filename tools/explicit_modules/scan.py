@@ -135,6 +135,10 @@ system_module_group(
     name = "_empty_implicit_modules",
     creates_module = False,
 )
+system_module_group(
+    name = "_empty_optional_module",
+    creates_module = False,
+)
 """
 
 
@@ -917,6 +921,24 @@ def _parse_exclude_modules(values: list[str]) -> dict[str, set[str]]:
     return dict(excluded_modules)
 
 
+def _render_module_aliases(all_modules_by_sdk: dict[str, set[str]], out: TextIO) -> None:
+    """Keep strict aliases and add separate aliases for conservative inference."""
+    all_modules = set().union(*all_modules_by_sdk.values())
+    for module in sorted(all_modules):
+        for optional in (False, True):
+            name = f"optional/{module}" if optional else module
+            out.write("\nalias(\n")
+            out.write(f'    name = "{name}",\n')
+            out.write("    actual = select({\n")
+            for sdk, modules in sorted(all_modules_by_sdk.items()):
+                if module in modules:
+                    target = _canonical_name(module, sdk, "alias")
+                    out.write(f'        ":{sdk}_sdk": ":{target}",\n')
+            if optional:
+                out.write('        "//conditions:default": ":_empty_optional_module",\n')
+            out.write("    }),\n)\n")
+
+
 def _main() -> None:
     parser = argparse.ArgumentParser(
         description="Scan Xcode and generate a BUILD file describing every system module.",
@@ -1029,18 +1051,7 @@ def _main() -> None:
     for sdk in sdk_names:
         buf.write(per_sdk_text[sdk])
 
-    for module in sorted(all_modules):
-        buf.write("\n")
-        buf.write("alias(\n")
-        buf.write(f'    name = "{module}",\n')
-        buf.write("    actual = select({\n")
-        for sdk in sdk_names:
-            if module in all_modules_by_sdk[sdk]:
-                buf.write(
-                    f'        ":{sdk}_sdk": ":{_canonical_name(module, sdk, "alias")}",\n'
-                )
-        buf.write("    }),\n")
-        buf.write(")\n")
+    _render_module_aliases(all_modules_by_sdk, buf)
 
     buf.write("\n")
     buf.write("alias(\n")

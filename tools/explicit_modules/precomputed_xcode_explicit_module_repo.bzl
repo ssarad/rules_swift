@@ -33,9 +33,14 @@ def _extract_all_module_names(text):
 def _precomputed_xcode_explicit_module_repo_impl(rctx):
     content = rctx.read(rctx.attr.build_file)
     rctx.file("BUILD.bazel", content)
+    names = _extract_all_module_names(content)
     rctx.file(
         "module_names.json",
-        json.encode(_extract_all_module_names(content)),
+        json.encode([name for name in names if not name.startswith("optional/")]),
+    )
+    rctx.file(
+        "optional_module_names.json",
+        json.encode([name.removeprefix("optional/") for name in names if name.startswith("optional/")]),
     )
     if hasattr(rctx, "repo_metadata"):
         return rctx.repo_metadata(reproducible = True)

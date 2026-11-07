@@ -16,6 +16,7 @@ bzl_library(
     name = "extensions",
     srcs = ["extensions.bzl"],
     deps = [
+        ":optional_module_repo",
         ":precomputed_xcode_explicit_module_repo",
         ":xcode_explicit_module_hub_repo",
         ":xcode_explicit_module_repo",
@@ -38,9 +39,15 @@ bzl_library(
 bzl_library(
     name = "xcode_explicit_module_hub_repo",
     srcs = ["xcode_explicit_module_hub_repo.bzl"],
+    deps = [":optional_module_repo"],
 )
 
 bzl_library(
     name = "xcode_explicit_module_repo",
     srcs = ["xcode_explicit_module_repo.bzl"],
+)
+
+bzl_library(
+    name = "optional_module_repo",
+    srcs = ["optional_module_repo.bzl"],
 )

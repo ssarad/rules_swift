@@ -58,6 +58,9 @@ def _xcode_explicit_module_repo_impl(rctx):
                 result.stderr,
             ),
         )
+
+    # Optional aliases are emitted by the scanner alongside the strict aliases.
+    rctx.file("optional_module_names.json", rctx.read("module_names.json"))
     if hasattr(rctx, "repo_metadata"):
         return rctx.repo_metadata(reproducible = True)
     return None

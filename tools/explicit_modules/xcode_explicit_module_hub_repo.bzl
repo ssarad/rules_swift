@@ -14,6 +14,8 @@
 
 """Create the user reference-able repo that points to explicit module targets."""
 
+load(":optional_module_repo.bzl", "module_catalog", "optional_deps_bzl")
+
 _XCODE_VERSION_FLAG = "@bazel_tools//tools/osx:xcode_version_flag_exact"
 
 def _sanitize(v):
@@ -37,15 +39,16 @@ config_setting(
 
     return "\n".join(parts)
 
-def _render_root_aliases(module_names, xcode_versions):
+def _render_root_aliases(module_names, xcode_versions, optional = False):
     """Given a list of module names, write out an alias to each Xcode version repo."""
     lines = []
     for name in sorted(module_names):
         lines.append("alias(")
-        lines.append('    name = "{}",'.format(name))
+        lines.append('    name = "{}",'.format("optional/" + name if optional else name))
         lines.append("    actual = select({")
         for version in xcode_versions:
-            lines.append('        ":xcode_{v}": "@system_sdk_xcode_{v}//:{n}",'.format(
+            lines.append('        ":xcode_{v}": "@system_sdk_{kind}xcode_{v}//:{n}",'.format(
+                kind = "optional_" if optional else "",
                 v = _sanitize(version),
                 n = name,
             ))
@@ -66,14 +69,18 @@ def _xcode_explicit_module_hub_repo_impl(rctx):
     for name in manifest:
         root_module_names[name] = True
 
+    catalog = module_catalog(manifest, rctx.attr.additional_module_names)
+    rctx.file("module_catalog.json", json.encode(catalog))
+    rctx.file("optional_sdk_deps.bzl", optional_deps_bzl(catalog["modules"]))
     xcode_settings_text = _xcode_config_settings(xcode_versions)
     rctx.file(
         "BUILD.bazel",
         'package(default_visibility = ["//visibility:public"])\n' +
+        'exports_files(["module_catalog.json", "optional_sdk_deps.bzl"])\n' +
         xcode_settings_text + _render_root_aliases(
             root_module_names.keys(),
             xcode_versions,
-        ),
+        ) + _render_root_aliases(catalog["modules"], xcode_versions, optional = True),
     )
     if hasattr(rctx, "repo_metadata"):
         return rctx.repo_metadata(reproducible = True)
@@ -82,6 +89,7 @@ def _xcode_explicit_module_hub_repo_impl(rctx):
 xcode_explicit_module_hub_repo = repository_rule(
     implementation = _xcode_explicit_module_hub_repo_impl,
     attrs = {
+        "additional_module_names": attr.string_list(),
         "default_manifest": attr.label(
             mandatory = True,
             allow_single_file = True,

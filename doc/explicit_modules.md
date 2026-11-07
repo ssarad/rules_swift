@@ -117,6 +117,83 @@ objc_library(
 )
 ```
 
+## Optional SDK dependencies for generated BUILD files
+
+Generators can conservatively collect SDK names from `import` statements and
+`canImport(...)` expressions without evaluating Swift conditional compilation:
+
+```bzl
+load("@system_sdk//:optional_sdk_deps.bzl", "optional_sdk_deps")
+
+swift_library(
+    name = "CrossPlatformLibrary",
+    srcs = ["CrossPlatformLibrary.swift"],
+    deps = optional_sdk_deps(["AppKit", "Foundation", "UIKit"]),
+)
+```
+
+`optional_sdk_deps` returns a sorted, deduplicated list of labels for recognized
+SDK candidates. It ignores names outside the catalog. Callers must exclude
+modules supplied by package dependencies first; for example, a package-provided
+`Testing` must not also become an SDK dependency. Source parsing and module-name
+resolution remain the generator's responsibility.
+
+The returned labels have the form `@system_sdk//:optional/UIKit`. They select the
+configured Xcode and then its SDK, including device/simulator distinctions. An
+unavailable module contributes empty `SwiftInfo` and `CcInfo`, without creating a
+fake module or adding compile actions. The actual compiler still evaluates
+`#if`, including `canImport` and version checks, using the build's configuration.
+Existing labels such as `@system_sdk//:UIKit` retain their strict behavior.
+An unknown Xcode configuration still fails rather than selecting an empty SDK.
+
+Availability means availability in the SDKs configured with `configure_sdks`.
+Configure every SDK you build for; an unscanned SDK is unavailable to optional
+dependencies. This interface does not guarantee that every discovered module
+can be compiled under arbitrary language features or compiler flags. Unused
+candidates and their transitive dependencies may still be compiled, and broken
+SDK modules may need exclusions. It is not an exact dependency scan.
+
+### Catalog and multiple Xcodes
+
+The catalog comes from the default Xcode's module list (or the first
+`configure_xcode` entry when using vendored SDK definitions). Loading the helper
+fetches that inventory. Using an optional dependency fetches the selected Xcode's
+inventory as needed; it does not fetch every installed Xcode. Names in the
+catalog resolve to empty providers when absent from the selected Xcode entirely.
+
+A module found only in a non-default Xcode must be registered explicitly:
+
+```bzl
+system_sdk.configure_optional_modules(names = ["NewSDKModule"])
+```
+
+Only tags in the root module extend the catalog. Registering a name does not make
+that module importable: it remains empty on Xcodes/SDKs that do not provide it.
+Unknown names passed to the helper are ignored; an explicit label for an
+unregistered name fails normally. The helper also works on non-macOS hosts:
+without vendored SDK definitions its catalog is empty except for explicit
+registrations, which resolve to empty providers.
+
+For consumers that need to inspect names, `@system_sdk//:module_catalog.json` is
+a supported interface with this schema:
+
+```json
+{"schema_version": 1, "modules": ["AppKit", "Foundation", "UIKit"]}
+```
+
+The list contains sorted candidate names, not availability for a particular
+configuration. Consumers should use the helper/optional labels for availability
+rather than parsing generated BUILD files or constructing per-Xcode repository
+names. BUILD generators can emit calls to the helper without reading this JSON
+at repository-fetch time; SDK changes then update the SDK repositories and
+analysis without adding an SDK input to each package repository. Consumers that
+read the JSON during fetching still depend on its contents.
+
+Vendored BUILD files must be regenerated with the current scan tool before using
+optional dependencies. Legacy files remain usable with the existing strict
+interface; the optional interface reports a regeneration diagnostic for files
+that lack optional aliases.
+
 ## Configuring what SDKs are available
 
 By default only the macOS and iOS SDKs are added to the `@system_sdk`

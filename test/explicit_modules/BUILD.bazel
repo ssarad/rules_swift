@@ -1,0 +1,42 @@
+load("@rules_python//python:py_test.bzl", "py_test")
+load(":optional_modules_tests.bzl", "optional_legacy_test_suite", "optional_modules_test_suite", "optional_providers_test_suite")
+
+py_test(
+    name = "scan_test",
+    srcs = [
+        "scan_test.py",
+        "//tools/explicit_modules:scan.py",
+    ],
+)
+
+optional_modules_test_suite(name = "optional_modules_tests")
+
+optional_providers_test_suite(name = "optional_providers")
+
+platform(
+    name = "macos",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+platform(
+    name = "ios_simulator",
+    constraint_values = [
+        "@platforms//os:ios",
+        "@platforms//cpu:aarch64",
+        "@apple_support//constraints:simulator",
+    ],
+)
+
+platform(
+    name = "ios_device",
+    constraint_values = [
+        "@platforms//os:ios",
+        "@platforms//cpu:aarch64",
+        "@apple_support//constraints:device",
+    ],
+)
+
+optional_legacy_test_suite(name = "optional_legacy_test")

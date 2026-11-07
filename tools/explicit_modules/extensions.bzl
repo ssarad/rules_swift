@@ -15,6 +15,7 @@
 """Configure explicit module repos for all Xcode verisons."""
 
 load("@apple_support//xcode:xcode_configure.bzl", "run_xcode_locator")
+load(":optional_module_repo.bzl", "module_catalog", "optional_deps_bzl", "optional_module_repo")
 load(
     ":precomputed_xcode_explicit_module_repo.bzl",
     "precomputed_xcode_explicit_module_repo",
@@ -70,7 +71,7 @@ def _generate_precomputed_repo(tag):
     )
     return repo_name
 
-def _generate_pinned_repos(vendored_xcode_tags):
+def _generate_pinned_repos(vendored_xcode_tags, additional_module_names):
     vendored_xcode_tags_by_version = _vendored_xcode_tags_by_version(vendored_xcode_tags)
     versions_ordered = []
     default_manifest = None
@@ -84,9 +85,11 @@ def _generate_pinned_repos(vendored_xcode_tags):
         name = "system_sdk",
         xcode_versions = versions_ordered,
         default_manifest = default_manifest,
+        additional_module_names = additional_module_names,
     )
+    _generate_optional_repos(versions_ordered)
 
-def _generate_local_repos(module_ctx, sdks, exclude_modules, vendored_xcode_tags = []):
+def _generate_local_repos(module_ctx, sdks, exclude_modules, additional_module_names, vendored_xcode_tags = []):
     vendored_xcode_tags_by_version = _vendored_xcode_tags_by_version(vendored_xcode_tags)
     toolchains, err = run_xcode_locator(module_ctx, _XCODE_LOCATOR_SRC)
 
@@ -95,9 +98,9 @@ def _generate_local_repos(module_ctx, sdks, exclude_modules, vendored_xcode_tags
         fail("xcode-locator failed: " + err)
     if not toolchains:
         if vendored_xcode_tags:
-            _generate_pinned_repos(vendored_xcode_tags)
+            _generate_pinned_repos(vendored_xcode_tags, additional_module_names)
         else:
-            _system_sdk_stub_repo(name = "system_sdk")
+            _system_sdk_stub_repo(name = "system_sdk", additional_module_names = additional_module_names)
         return
 
     default_path = _default_xcode_path(module_ctx)
@@ -150,7 +153,23 @@ def _generate_local_repos(module_ctx, sdks, exclude_modules, vendored_xcode_tags
         name = "system_sdk",
         xcode_versions = versions_ordered,
         default_manifest = default_manifest,
+        additional_module_names = additional_module_names,
     )
+    _generate_optional_repos(versions_ordered)
+
+def _generate_optional_repos(versions):
+    # Declaring these repositories does not fetch them. Only the selected Xcode
+    # is read when an optional alias is analyzed; the hub reads its default only.
+    for version in versions:
+        suffix = _sanitize(version)
+        sdk_repo = "@system_sdk_xcode_" + suffix
+        optional_module_repo(
+            name = "system_sdk_optional_xcode_" + suffix,
+            catalog = "@system_sdk//:module_catalog.json",
+            module_names = sdk_repo + "//:module_names.json",
+            optional_module_names = sdk_repo + "//:optional_module_names.json",
+            sdk_repo = sdk_repo,
+        )
 
 def _add_exclude_modules(result, exclude_modules):
     for sdk, modules in exclude_modules.items():
@@ -188,11 +207,17 @@ def _sdk_extension_impl(module_ctx):
     module_ctx.watch(_SCANNER_SCRIPT)
 
     vendored_xcode_tags = []
+    additional_module_names = []
     for mod in module_ctx.modules:
         if not mod.is_root:
             continue
         for tag in mod.tags.configure_xcode:
             vendored_xcode_tags.append(tag)
+        for tag in mod.tags.configure_optional_modules:
+            for name in tag.names:
+                if not name or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_." for c in name.elems()]):
+                    fail("Invalid optional SDK module name: " + repr(name))
+                additional_module_names.append(name)
 
     if vendored_xcode_tags:
         if (
@@ -200,14 +225,14 @@ def _sdk_extension_impl(module_ctx):
             module_ctx.os.environ.get(_INCLUDE_LOCAL_XCODES_ENV) == "1"
         ):
             sdks, exclude_modules = _collect_sdk_config(module_ctx)
-            _generate_local_repos(module_ctx, sdks, exclude_modules, vendored_xcode_tags)
+            _generate_local_repos(module_ctx, sdks, exclude_modules, additional_module_names, vendored_xcode_tags)
         else:
-            _generate_pinned_repos(vendored_xcode_tags)
+            _generate_pinned_repos(vendored_xcode_tags, additional_module_names)
     elif module_ctx.os.name != "mac os x":
-        _system_sdk_stub_repo(name = "system_sdk")
+        _system_sdk_stub_repo(name = "system_sdk", additional_module_names = additional_module_names)
     else:
         sdks, exclude_modules = _collect_sdk_config(module_ctx)
-        _generate_local_repos(module_ctx, sdks, exclude_modules)
+        _generate_local_repos(module_ctx, sdks, exclude_modules, additional_module_names)
 
     return module_ctx.extension_metadata(reproducible = True)
 
@@ -234,13 +259,24 @@ system_module_group(
 """
 
 def _system_sdk_stub_repo_impl(rctx):
-    rctx.file("BUILD.bazel", _STUB_BUILD_FILE)
+    catalog = module_catalog([], rctx.attr.additional_module_names)
+    rctx.file("module_catalog.json", json.encode(catalog))
+    rctx.file("optional_sdk_deps.bzl", optional_deps_bzl(catalog["modules"]))
+    aliases = [
+        'alias(name = {}, actual = ":implicit_modules")'.format(repr("optional/" + name))
+        for name in catalog["modules"]
+    ]
+    rctx.file("BUILD.bazel", "\n".join([
+        _STUB_BUILD_FILE,
+        'exports_files(["module_catalog.json", "optional_sdk_deps.bzl"])',
+    ] + aliases) + "\n")
     if hasattr(rctx, "repo_metadata"):
         return rctx.repo_metadata(reproducible = True)
     return None
 
 _system_sdk_stub_repo = repository_rule(
     implementation = _system_sdk_stub_repo_impl,
+    attrs = {"additional_module_names": attr.string_list()},
     doc = "Empty hub repo used when no Xcode is available so `@system_sdk//:all_modules` always resolves.",
 )
 
@@ -280,6 +316,10 @@ _configure_sdks_tag = tag_class(
 system_sdk = module_extension(
     implementation = _sdk_extension_impl,
     tag_classes = {
+        "configure_optional_modules": tag_class(
+            attrs = {"names": attr.string_list(doc = "Additional optional module names, such as modules available only in a non-default Xcode.")},
+            doc = "Extend the optional SDK catalog without scanning additional Xcodes. Only root-module tags are used.",
+        ),
         "configure_sdks": _configure_sdks_tag,
         "configure_xcode": _configure_xcode_tag,
     },

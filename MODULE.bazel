@@ -493,3 +493,12 @@ http_archive(
     strip_prefix = "wasmtime-v46.0.1-x86_64-linux",
     url = "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-x86_64-linux.tar.xz",
 )
+
+# Synthetic SDKs exercise optional dependency resolution without scanning Xcode.
+optional_sdk_tests = use_extension("//test/explicit_modules:repositories.bzl", "optional_sdk_test_repositories", dev_dependency = True)
+use_repo(
+    optional_sdk_tests,
+    "optional_test_hub",
+    new_optional_sdk = "system_sdk_optional_xcode_2_0_0_TEST",
+    old_optional_sdk = "system_sdk_optional_xcode_1_0_0_TEST",
+)
